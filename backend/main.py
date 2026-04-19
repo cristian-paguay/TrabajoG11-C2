@@ -1,6 +1,5 @@
 import io
 import json
-from functools import lru_cache
 
 import pandas as pd
 from fastapi import FastAPI, Query, HTTPException
@@ -13,64 +12,77 @@ from models import Company, ComparisonItem
 
 app = FastAPI(title="Financial Dashboard API", version="1.0.0")
 
+# ── Entry point — siempre inicia en 0.0.0.0 ───────────────────────────────
+# Usar: python main.py  O  uvicorn main:app --reload
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# In-memory cache — replaced on /refresh
+# ── In-memory cache ────────────────────────────────────────────────────────
 _cache: dict = {"df": None}
 
 
 def get_df() -> pd.DataFrame:
     if _cache["df"] is None:
+        print("[main] cache vacío — ejecutando scraper + enriquecimiento...")
         df = scrape_top_companies(limit=10)
         df = enrich_with_yfinance(df)
         _cache["df"] = df
+        print(f"[main] cache listo con {len(df)} empresas")
     return _cache["df"]
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/companies", response_model=list[Company])
 def list_companies():
-    """Returns the top 10 scraped and enriched companies."""
+    """Retorna las 10 empresas más activas scrapeadas y enriquecidas."""
     df = get_df()
-    return json.loads(df.to_json(orient="records"))
+    df_clean = df.where(pd.notna(df), other=None)
+    return json.loads(df_clean.to_json(orient="records"))
 
 
 @app.get("/prices/{ticker}")
 def price_history(
     ticker: str,
-    period: str = Query(default="1mo", enum=["5d","1mo","3mo","6mo","1y"]),
-    interval: str = Query(default="1d", enum=["1d","1wk"]),
+    period: str   = Query(default="1mo", enum=["5d", "1mo", "3mo", "6mo", "1y"]),
+    interval: str = Query(default="1d",  enum=["1d", "1wk"]),
 ):
-    """OHLCV history for a single ticker."""
-    history = get_price_history([ticker], period=period, interval=interval)
-    if ticker not in history or history[ticker].empty:
-        raise HTTPException(status_code=404, detail=f"No data for {ticker}")
-    return history[ticker].to_dict(orient="records")
+    """Historial OHLCV para cualquier ticker — no requiere /companies primero."""
+    t = ticker.upper()
+    history = get_price_history([t], period=period, interval=interval)
+    data    = history.get(t)
+    if data is None or data.empty:
+        raise HTTPException(status_code=404, detail=f"No se encontraron datos para '{ticker}'. Verifica el símbolo.")
+    return data.to_dict(orient="records")
 
 
 @app.get("/compare", response_model=list[ComparisonItem])
 def compare_companies(
-    period: str = Query(default="1mo", enum=["5d","1mo","3mo","6mo","1y"]),
+    period: str = Query(default="1mo", enum=["5d", "1mo", "3mo", "6mo", "1y"]),
 ):
-    """% price change comparison across all 10 companies."""
-    df = get_df()
+    """Comparación de cambio % de precio entre todas las empresas cacheadas."""
+    df      = get_df()
     tickers = df["ticker"].tolist()
     return get_comparison_data(tickers, period=period)
 
 
 @app.get("/export-csv")
 def export_csv():
-    """
-    Download the enriched company DataFrame as a CSV file.
-    Also used by the frontend download button.
-    """
-    df = get_df()
+    """Descarga el DataFrame enriquecido como archivo CSV."""
+    df     = get_df()
     stream = io.StringIO()
     df.to_csv(stream, index=False)
     stream.seek(0)
@@ -83,12 +95,7 @@ def export_csv():
 
 @app.post("/refresh")
 def refresh_data():
-    """Force re-scrape and re-enrich. Clears the in-memory cache."""
+    """Limpia el cache y fuerza un nuevo scrape + enriquecimiento."""
     _cache["df"] = None
-    get_df()  # eager reload
-    return {"status": "refreshed", "count": len(_cache["df"])}
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+    get_df()
+    return {"status": "actualizado", "count": int(len(_cache["df"]))}

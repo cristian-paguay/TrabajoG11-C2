@@ -1,87 +1,147 @@
-import { useEffect, useState } from "react";
-import { api } from "./api";
-import CompanyTable from "./components/CompanyTable";
-import PriceChart from "./components/PriceChart";
-import CompareChart from "./components/CompareChart";
+import { useEffect, useState, useRef } from 'react'
+import { api } from './api'
+import CompanyTable from './components/CompanyTable'
+import PriceChart   from './components/PriceChart'
+import CompareChart from './components/CompareChart'
 
-const PERIODS = ["5d", "1mo", "3mo", "6mo", "1y"];
+const PERIODS = ['5d', '1mo', '3mo', '6mo', '1y']
 
 export default function App() {
-  const [companies, setCompanies]   = useState([]);
-  const [comparison, setComparison] = useState([]);
-  const [selected, setSelected]     = useState(null);
-  const [period, setPeriod]         = useState("1mo");
-  const [loading, setLoading]       = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [companies,  setCompanies]  = useState([])
+  const [comparison, setComparison] = useState([])
+  const [selected,   setSelected]   = useState(null)
+  const [period,     setPeriod]     = useState('1mo')
+  const [loading,    setLoading]    = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [error,      setError]      = useState(null)
+  const [serverOk,   setServerOk]   = useState(null)
 
-  const load = async () => {
-    setLoading(true);
-    const [c, cmp] = await Promise.all([
-      api.getCompanies(),
-      api.getComparison(period),
-    ]);
-    setCompanies(c.data);
-    setComparison(cmp.data);
-    if (!selected && c.data.length) setSelected(c.data[0].ticker);
-    setLoading(false);
-  };
+  // track whether the initial load already ran
+  const initialized = useRef(false)
 
-  useEffect(() => { load(); }, [period]);
+  const loadComparison = async (p) => {
+    try {
+      const cmp = await api.getComparison(p)
+      setComparison(cmp.data)
+    } catch {
+      // non-fatal — chart just stays empty
+    }
+  }
+
+  const loadAll = async (p) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const c = await api.getCompanies()
+      setCompanies(c.data)
+      if (c.data.length) setSelected(prev => prev ?? c.data[0].ticker)
+      await loadComparison(p)
+    } catch {
+      setError('No se pudo cargar los datos. Verifica que el backend esté corriendo en el puerto 8000.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // runs once on mount — waits for health check first
+  useEffect(() => {
+    if (initialized.current) return
+    initialized.current = true
+
+    api.health()
+      .then(() => {
+        setServerOk(true)
+        loadAll(period)
+      })
+      .catch(() => {
+        setServerOk(false)
+        setLoading(false)
+        setError('Servidor no disponible en http://localhost:8000')
+      })
+  }, [])
+
+  // runs only when period changes AFTER initial load
+  useEffect(() => {
+    if (!initialized.current || !serverOk) return
+    loadComparison(period)
+  }, [period])
 
   const handleRefresh = async () => {
-    setRefreshing(true);
-    await api.refresh();
-    await load();
-    setRefreshing(false);
-  };
+    setRefreshing(true)
+    try {
+      await api.refresh()
+      await loadAll(period)
+    } catch {
+      setError('Falló el refresco de datos.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handlePeriod = (p) => {
+    setPeriod(p)
+    // also reload price chart by updating selected ticker dependency
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto space-y-5">
+    <div className="page">
+      <div className="bg-grid" />
+      <div className="container">
 
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="topbar">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-800">Financial Dashboard</h1>
-            <p className="text-sm text-gray-400 mt-0.5">Top 10 most active · powered by yfinance</p>
+            <p className="page-sub">Financial Dashboard · yfinance + Yahoo Finance</p>
+            <h1 className="page-title">
+              Mercado <span style={{ color:'var(--accent)' }}>en vivo</span>
+            </h1>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex bg-white rounded-lg border border-gray-200 p-0.5 gap-0.5">
+          <div className="topbar-right">
+            <div className="period-bar">
               {PERIODS.map(p => (
-                <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  className={`px-3 py-1 rounded-md text-sm transition ${
-                    period === p
-                      ? "bg-indigo-600 text-white"
-                      : "text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  {p}
-                </button>
+                <button key={p} className={`period-btn${period===p?' active':''}`}
+                  onClick={() => handlePeriod(p)}>{p}</button>
               ))}
             </div>
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="px-4 py-1.5 bg-white border border-gray-200 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
-            >
-              {refreshing ? "Refreshing…" : "↺ Refresh"}
+            <button className="btn-refresh" onClick={handleRefresh}
+              disabled={refreshing || loading}>
+              <span className={refreshing ? 'spin' : ''}>↺</span>
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
             </button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="text-center py-20 text-gray-400">Loading data…</div>
-        ) : (
-          <>
-            {/* Charts row */}
-            <div className="grid grid-cols-2 gap-4">
-              <PriceChart ticker={selected} period={period} />
-              <CompareChart data={comparison} />
-            </div>
+        {/* Status bar */}
+        <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+          <span className={`status-pill${serverOk===true?' ok':serverOk===false?' err':''}`}>
+            <span className="dot" />
+            {serverOk===null ? 'Conectando...' : serverOk ? 'Backend conectado' : 'Backend desconectado'}
+          </span>
+          {companies.length > 0 && (
+            <span className="mono" style={{ fontSize:11, color:'var(--dim)' }}>
+              {companies.length} empresas · período {period}
+            </span>
+          )}
+        </div>
 
-            {/* Company table */}
+        {/* Error */}
+        {error && <div className="error-banner">{error}</div>}
+
+        {/* Loading */}
+        {loading && !error && (
+          <div className="card loading-box">
+            <p>Scrapeando y enriqueciendo datos...</p>
+            <p>Puede tardar 20–40 segundos en el primer inicio</p>
+          </div>
+        )}
+
+        {/* Main content — only shown when we have data and are not loading */}
+        {!loading && !error && companies.length > 0 && (
+          <>
+            <div className="charts-grid">
+              <PriceChart ticker={selected} period={period} />
+              <CompareChart data={comparison} period={period} />
+            </div>
             <CompanyTable
               companies={companies}
               onSelect={setSelected}
@@ -92,5 +152,5 @@ export default function App() {
         )}
       </div>
     </div>
-  );
+  )
 }
