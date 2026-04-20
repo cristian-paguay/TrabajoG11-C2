@@ -20,12 +20,11 @@ class CompanyDB(Base):
     change_percent = Column(Float)
     market_cap = Column(String)
     sector = Column(String)
-    # Añade aquí más columnas según lo que retorne tu scraper/enrich
 
 # Crear las tablas
 Base.metadata.create_all(bind=engine)
 
-# --- PYDANTIC (Para la API - los que ya tenías) ---
+# --- PYDANTIC (Para la API) ---
 class Company(BaseModel):
     ticker: str
     name: str | None
