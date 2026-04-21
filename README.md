@@ -290,3 +290,9 @@ Documentación interactiva disponible en `http://localhost:8000/docs`
 - El proxy de Vite (`/api → http://127.0.0.1:8000`) usa IPv4 explícito para evitar conflictos con Node.js 17+ que resuelve `localhost` como `::1`.
 - Los estilos usan CSS puro con variables (`--accent`, `--bg`, `--border`, etc.) sin PostCSS ni Tailwind para garantizar compatibilidad en cualquier entorno.
 - yfinance es una librería no oficial. Yahoo Finance puede cambiar sus endpoints internos sin previo aviso, lo que puede causar errores temporales en `.info` o `.history()`. En ese caso esperar unos minutos y llamar `POST /refresh`.
+
+## Funcionamiento en red LAN
+<img width="1362" height="672" alt="image" src="https://github.com/user-attachments/assets/748c3af5-1cfc-4ac4-b2b0-c9a7eab01ae0" />
+<img width="1362" height="672" alt="image" src="https://github.com/user-attachments/assets/7f66c5c1-7813-4bda-9d86-5dd4dc748979" />
+
+
