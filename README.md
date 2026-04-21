@@ -133,3 +133,7 @@ Documentación interactiva disponible en `http://localhost:8000/docs`
 - El caché es **en memoria** — se pierde al reiniciar el servidor. Llamar `POST /refresh` o reiniciar reconstruye los datos.
 - El proxy de Vite (`/api → http://127.0.0.1:8000`) usa IPv4 explícito para evitar conflictos con Node.js 17+ que resuelve `localhost` como `::1`.
 - Los estilos usan CSS puro con variables (`--accent`, `--bg`, `--border`, etc.) sin PostCSS ni Tailwind para garantizar compatibilidad en cualquier entorno.
+
+## Funcionamiento en Red LAN
+<img width="1359" height="681" alt="image" src="https://github.com/user-attachments/assets/02981b16-fdee-45d5-b176-ab28a2b35825" />
+<img width="1362" height="672" alt="image" src="https://github.com/user-attachments/assets/b799cbf6-c1de-4182-b639-9eef72b62325" />
