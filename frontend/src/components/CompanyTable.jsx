@@ -1,10 +1,21 @@
 export default function CompanyTable({ companies, onSelect, selected, csvUrl }) {
-  const fmt    = (n, d=2) => n != null ? Number(n).toFixed(d) : '—'
-  const fmtCap = v => {
-    if (!v) return '—'
-    if (v >= 1e12) return `$${(v/1e12).toFixed(1)}T`
-    if (v >= 1e9)  return `$${(v/1e9).toFixed(1)}B`
-    return `$${(v/1e6).toFixed(0)}M`
+  // Safely format any numeric value — handles null, undefined, strings
+  const fmt = (n, d = 2) => {
+    const num = parseFloat(n)
+    return isNaN(num) ? '—' : num.toFixed(d)
+  }
+
+  const fmtPrice = (n) => {
+    const num = parseFloat(n)
+    return isNaN(num) ? '—' : `$${num.toFixed(2)}`
+  }
+
+  const fmtCap = (v) => {
+    const num = parseFloat(v)
+    if (isNaN(num) || !num) return '—'
+    if (num >= 1e12) return `$${(num / 1e12).toFixed(1)}T`
+    if (num >= 1e9)  return `$${(num / 1e9).toFixed(1)}B`
+    return `$${(num / 1e6).toFixed(0)}M`
   }
 
   return (
@@ -28,25 +39,27 @@ export default function CompanyTable({ companies, onSelect, selected, csvUrl }) 
           </thead>
           <tbody>
             {companies.map(c => {
-              const up = (c.change_pct_num ?? 0) >= 0
+              const up = parseFloat(c.change_pct_num) >= 0
               return (
                 <tr key={c.ticker} onClick={() => onSelect(c.ticker)}
                   className={selected === c.ticker ? 'selected' : ''}>
                   <td><span className="ticker-cell">{c.ticker}</span></td>
                   <td><span className="name-cell" title={c.name}>{c.name}</span></td>
-                  <td><span className="mono-cell">${fmt(c.price)}</span></td>
-                  <td><span className={up ? 'up-cell' : 'dn-cell'}>{up?'+':''}{fmt(c.change_pct_num)}%</span></td>
+                  <td><span className="mono-cell">{fmtPrice(c.price)}</span></td>
+                  <td><span className={up ? 'up-cell' : 'dn-cell'}>
+                    {up ? '+' : ''}{fmt(c.change_pct_num)}%
+                  </span></td>
                   <td><span className="sector-cell">{c.sector ?? '—'}</span></td>
-                  <td><span className="mono-cell">{fmt(c.pe_ratio,1)}</span></td>
+                  <td><span className="mono-cell">{fmt(c.pe_ratio, 1)}</span></td>
                   <td><span className="mono-cell">{fmtCap(c.market_cap)}</span></td>
-                  <td><span className="mono-cell">{fmt(c.beta,2)}</span></td>
+                  <td><span className="mono-cell">{fmt(c.beta, 2)}</span></td>
                   <td>
                     <div className="score-wrap">
                       <div className="score-track">
                         <div className="score-fill"
-                          style={{ width:`${Math.min(100,(c.indicator_score/10)*100)}%` }} />
+                          style={{ width:`${Math.min(100, (parseFloat(c.indicator_score) / 10) * 100)}%` }} />
                       </div>
-                      <span className="score-num">{fmt(c.indicator_score,1)}</span>
+                      <span className="score-num">{fmt(c.indicator_score, 1)}</span>
                     </div>
                   </td>
                 </tr>
