@@ -6,3 +6,4 @@ requests
 beautifulsoup4
 httpx
 python-multipart
+sqlalchemy
