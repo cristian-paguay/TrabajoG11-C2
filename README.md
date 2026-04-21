@@ -13,9 +13,87 @@ Extrae las 10 acciones más activas de Yahoo Finance, las enriquece con datos de
 | Capa | Tecnología |
 |---|---|
 | Backend | Python 3.11 · FastAPI · uvicorn |
-| Data | pandas · yfinance · BeautifulSoup4 · requests |
+| Data | pandas · yfinance · BeautifulSoup4 |
+| Base de datos | SQLite · SQLAlchemy |
 | Frontend | React 18 · Vite 5 · Recharts · Axios |
 | Estilos | CSS plano con variables (sin frameworks) |
+| Infraestructura | Docker · Docker Compose · nginx |
+
+---
+
+## Docker
+
+### Requisitos
+
+- Docker 24+
+- Docker Compose v2
+
+### Levantar todo
+
+```bash
+docker compose up --build
+```
+
+| Servicio | URL |
+|---|---|
+| Frontend | `http://localhost:3000` |
+| Backend API | `http://localhost:8000` |
+| Docs interactivos | `http://localhost:8000/docs` |
+
+### Arquitectura Docker
+
+```
+Browser → localhost:3000 → nginx (frontend container)
+                               │
+                               ├── /          → archivos estáticos (React build)
+                               └── /api/*     → rewrite → backend:8000/* (red interna Docker)
+```
+
+- El frontend se construye con Vite en una imagen multi-stage y se sirve con **nginx**.
+- Las llamadas a `/api/*` son redirigidas internamente por nginx al servicio `backend` — el navegador nunca habla directo con el puerto 8000.
+- nginx usa el resolver interno de Docker (`127.0.0.11`) para resolver el hostname `backend` en tiempo de request, no al arrancar.
+- La base de datos SQLite persiste en un volumen Docker (`db_data`) — los datos sobreviven reinicios.
+
+### Comandos útiles
+
+```bash
+# Detener contenedores
+docker compose down
+
+# Detener y borrar base de datos
+docker compose down -v
+
+# Ver logs en tiempo real
+docker compose logs -f
+
+# Reconstruir solo el backend
+docker compose up --build backend
+```
+
+---
+
+## Base de datos SQL (SQLite)
+
+La app usa **SQLite** vía **SQLAlchemy ORM**. El archivo `financial_data.db` se crea automáticamente al iniciar el backend.
+
+### Tabla `companies`
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `id` | INTEGER PK | Autoincremental |
+| `ticker` | STRING UNIQUE | Símbolo bursátil (ej: `AAPL`) |
+| `name` | STRING | Nombre de la empresa |
+| `price` | FLOAT | Precio actual de la acción |
+| `change_percent` | FLOAT | Variación porcentual del día |
+| `market_cap` | STRING | Capitalización de mercado |
+| `sector` | STRING | Sector económico |
+
+### Flujo de datos
+
+1. Al arrancar el backend, SQLAlchemy crea la tabla si no existe (`Base.metadata.create_all`).
+2. `GET /companies` consulta la tabla — si está vacía, dispara el scraper de Yahoo Finance + enriquecimiento con `yfinance` y guarda los resultados.
+3. `POST /refresh` borra todos los registros y repite el proceso de scraping, forzando datos frescos.
+4. `db.merge()` se usa al insertar para evitar errores de clave duplicada si un ticker ya existe.
 
 ---
 
@@ -23,16 +101,23 @@ Extrae las 10 acciones más activas de Yahoo Finance, las enriquece con datos de
 
 ```
 financial-dashboard/
+├── docker-compose.yml
 ├── backend/
+│   ├── Dockerfile
+│   ├── .dockerignore
 │   ├── main.py           # Aplicación FastAPI y endpoints
 │   ├── scraper.py        # Scraping de Yahoo Finance
 │   ├── finance.py        # Enriquecimiento con yfinance
-│   ├── models.py         # Modelos Pydantic
+│   ├── models.py         # Modelos SQLAlchemy + Pydantic
+│   ├── financial_data.db # SQLite (generado en runtime)
 │   └── requirements.txt
 └── frontend/
+    ├── Dockerfile
+    ├── .dockerignore
+    ├── nginx.conf        # Proxy /api/* → backend:8000 en producción
     ├── index.html
     ├── package.json
-    ├── vite.config.js
+    ├── vite.config.js    # Proxy /api/* → localhost:8000 en desarrollo
     └── src/
         ├── main.jsx
         ├── App.jsx
