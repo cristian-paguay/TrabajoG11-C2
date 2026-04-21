@@ -292,7 +292,8 @@ Documentación interactiva disponible en `http://localhost:8000/docs`
 - yfinance es una librería no oficial. Yahoo Finance puede cambiar sus endpoints internos sin previo aviso, lo que puede causar errores temporales en `.info` o `.history()`. En ese caso esperar unos minutos y llamar `POST /refresh`.
 
 ## Funcionamiento en red LAN
+<img width="1359" height="681" alt="image" src="https://github.com/user-attachments/assets/bf9a014a-fd99-4418-b806-e5e53c2f8e91" />
 <img width="1362" height="672" alt="image" src="https://github.com/user-attachments/assets/748c3af5-1cfc-4ac4-b2b0-c9a7eab01ae0" />
-<img width="1362" height="672" alt="image" src="https://github.com/user-attachments/assets/7f66c5c1-7813-4bda-9d86-5dd4dc748979" />
+
 
 
