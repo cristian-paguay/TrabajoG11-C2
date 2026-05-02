@@ -381,4 +381,173 @@ Documentación interactiva disponible en `http://localhost:8000/docs`
 <img width="1362" height="672" alt="image" src="https://github.com/user-attachments/assets/748c3af5-1cfc-4ac4-b2b0-c9a7eab01ae0" />
 
 
+## Análisis de seguridad — `POST /refresh`
 
+En esta sección se realiza un análisis de las brechas de seguridad existentes en el proyecto, contemplando como punto de partida la siguiente pregunta:
+¿Cómo podría un atacante abusar de este endpoint para forzar ejecuciones repetidas del proceso completo y qué impacto tendría esto en el rendimiento del sistema, el consumo de recursos y la disponibilidad del servicio?
+
+### El problema
+
+El endpoint no tiene ningún mecanismo de protección:
+
+```python
+@app.post("/refresh")
+def refresh_data():
+    _cache["df"] = None
+    get_df()  # bloquea el hilo hasta completar scraping + yfinance
+    return {"status": "actualizado", "count": int(len(_cache["df"]))}
+```
+
+Cualquier cliente que pueda alcanzar el servidor puede llamarlo ilimitadamente, de forma simultánea, sin autenticación ni restricción de frecuencia.
+
+---
+
+### Cómo lo explotaría un atacante
+
+**Ataque de agotamiento de recursos (Resource Exhaustion)**
+
+El vector más simple es enviar peticiones concurrentes en volumen:
+
+```bash
+# 50 peticiones simultáneas en bucle continuo
+while true; do
+  for i in $(seq 1 50); do
+    curl -s -X POST http://servidor:8000/refresh &
+  done
+  wait
+done
+```
+
+Cada llamada ejecuta secuencialmente:
+
+1. Una petición HTTP a `finance.yahoo.com/most-active/` con parseo de HTML
+2. Diez llamadas separadas a `yf.Ticker(ticker).info` — una por empresa
+3. Construcción y escritura de un DataFrame de pandas en memoria
+
+Con un solo worker, FastAPI procesa las peticiones de forma síncrona. Cada ejecución completa tarda entre 20 y 40 segundos. Con peticiones concurrentes, los workers se saturan y la cola de peticiones crece sin límite.
+
+**Ataque de carrera sobre el caché (Race Condition)**
+
+El caché se implementa con un diccionario Python simple:
+
+```python
+_cache: dict = {"df": None}
+
+def get_df():
+    if _cache["df"] is None:       # ← lectura
+        df = scrape_top_companies()
+        df = enrich_with_yfinance(df)
+        _cache["df"] = df          # ← escritura
+    return _cache["df"]
+```
+
+Con múltiples peticiones concurrentes, varios workers pueden pasar la comprobación `if _cache["df"] is None` simultáneamente antes de que ninguno complete la escritura. El resultado es que el proceso de scraping y enriquecimiento se ejecuta N veces en paralelo — una vez por petición concurrente que pasó la verificación — multiplicando el consumo de CPU, memoria y conexiones de red por N.
+
+---
+
+### Impacto en rendimiento, recursos y disponibilidad
+
+**CPU y memoria**
+
+Cada ejecución de `enrich_with_yfinance` construye un DataFrame nuevo en memoria y ejecuta diez instancias de `yf.Ticker().info`, cada una de las cuales abre conexiones HTTP, parsea JSON y construye estructuras de datos internas de pandas. Con 20 peticiones concurrentes activas, el proceso Python puede consumir varios cientos de MB de RAM y llevar la CPU al 100% en un servidor de recursos modestos.
+
+**Conexiones de red hacia yfinance**
+
+yfinance no tiene rate limiting documentado públicamente, pero implementa throttling silencioso: cuando detecta demasiadas peticiones desde la misma IP en un intervalo corto, comienza a devolver respuestas vacías o errores HTTP 429/403. Un atacante que fuerce ejecuciones repetidas de `/refresh` no solo degrada el servidor propio sino que quema el cupo de peticiones disponibles hacia Yahoo Finance, dejando a todos los usuarios con datos vacíos o caché corrupto hasta que el throttle se libere — típicamente varios minutos.
+
+**Disponibilidad del servicio (DoS efectivo)**
+
+Dado que `get_df()` es una función síncrona que bloquea el hilo durante 20–40 segundos, y uvicorn por defecto levanta un número limitado de workers, un atacante con una conexión de red estable puede monopolizar todos los workers disponibles con peticiones a `/refresh` y dejar sin capacidad de respuesta a los endpoints legítimos como `/companies`, `/prices` o `/compare`. Esto constituye un Denial of Service efectivo sin necesidad de generar un volumen anormal de tráfico — basta con mantener ocupados los workers con operaciones lentas.
+
+---
+
+### Mitigaciones
+
+**1. Rate limiting por IP**
+
+La solución más directa es usar `slowapi`, que integra rate limiting en FastAPI con una línea por endpoint:
+
+```python
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post("/refresh")
+@limiter.limit("1/minute")  # máximo 1 refresh por IP por minuto
+def refresh_data(request: Request):
+    ...
+```
+
+**2. Autenticación con API key**
+
+Proteger el endpoint con un header secreto que solo conozcan los clientes autorizados:
+
+```python
+from fastapi import Header, HTTPException
+import os
+
+API_KEY = os.environ.get("REFRESH_API_KEY", "")
+
+@app.post("/refresh")
+def refresh_data(x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="No autorizado")
+    ...
+```
+
+**3. Bloqueo con estado de ejecución**
+
+Evitar ejecuciones simultáneas con un flag de bloqueo, de forma que si ya hay un refresh en curso las peticiones adicionales devuelvan inmediatamente sin lanzar otro proceso:
+
+```python
+import threading
+
+_cache = {"df": None, "refreshing": False}
+_lock  = threading.Lock()
+
+@app.post("/refresh")
+def refresh_data():
+    with _lock:
+        if _cache["refreshing"]:
+            return {"status": "en_progreso", "message": "Ya hay un refresh en curso"}
+        _cache["refreshing"] = True
+    try:
+        _cache["df"] = None
+        get_df()
+        return {"status": "actualizado", "count": int(len(_cache["df"]))}
+    finally:
+        _cache["refreshing"] = False
+```
+
+**4. Refresh automático programado en lugar de endpoint público**
+
+La solución arquitectónica más limpia es eliminar el endpoint público completamente y mover el refresh a un scheduler interno que corra en horario de mercado:
+
+```python
+from apscheduler.schedulers.background import BackgroundScheduler
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    lambda: (_cache.update({"df": None}), get_df()),
+    "cron",
+    hour="9-16",
+    minute="*/30"
+)
+scheduler.start()
+```
+
+Esto elimina la superficie de ataque por completo: ningún cliente externo puede disparar el proceso — solo el reloj interno del servidor.
+
+---
+
+### Resumen del riesgo
+
+| Vector | Probabilidad | Impacto |
+|---|---|---|
+| DoS por saturación de workers | Alta — endpoint público sin auth | Servicio inaccesible para usuarios legítimos |
+| Agotamiento de rate limit de yfinance | Alta — 10 llamadas por refresh | Datos vacíos para todos los usuarios |
+| Race condition en caché | Media — requiere concurrencia | Múltiples scrapers simultáneos, CPU/RAM al límite |
+| Abuso desde red LAN | Alta — servidor escucha en `0.0.0.0` | Cualquier dispositivo en la red local puede atacarlo |
+
+El último punto es especialmente relevante dado que el servidor está configurado con `host="0.0.0.0"` y es visible en la red LAN. En un entorno de producción, el endpoint `/refresh` debería estar protegido con al menos autenticación por API key y rate limiting antes de exponerse a cualquier red.
