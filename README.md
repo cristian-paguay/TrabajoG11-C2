@@ -381,7 +381,7 @@ Documentación interactiva disponible en `http://localhost:8000/docs`
 <img width="1362" height="672" alt="image" src="https://github.com/user-attachments/assets/748c3af5-1cfc-4ac4-b2b0-c9a7eab01ae0" />
 
 
-## Análisis de seguridad — `POST /refresh`
+## RESPUESTA A COMENTARIO: Análisis de seguridad — `POST /refresh`
 
 En esta sección se realiza un análisis de las brechas de seguridad existentes en el proyecto, contemplando como punto de partida la siguiente pregunta:
 ¿Cómo podría un atacante abusar de este endpoint para forzar ejecuciones repetidas del proceso completo y qué impacto tendría esto en el rendimiento del sistema, el consumo de recursos y la disponibilidad del servicio?
